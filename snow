@@ -1,0 +1,48 @@
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.realpath(__file__)))
+from ida_token_recv import IdaTokenReceiver
+from urllib2 import Request, urlopen
+import json
+
+class SnowStatusReader(object):
+    def __init__(self, snow_env):
+        self.env = snow_env
+        self.snow_token=''
+        if 'PROD' == self.env:
+            self.tokenReader = IdaTokenReceiver(fid = 'PROD_FID',
+                                                psswd = 'PROD_PASSWD',
+                                                cltid = 'PROD_CLIENT_ID_FROM_ONBOARDING',
+                                                rsrc  = 'JPMC:URI:RS-103752-21346-GTIDPOServiceMgt-PROD',
+                                                env = 'PROD')
+            self.apigee = 'https://api-s2-eu-2-mitra.jpmchase.net/gti-it-service-mgt/change/v6/changes/'
+        elif 'UAT' == self.env:
+            self.tokenReader = IdaTokenReceiver(fid = 'UAT_FID',
+                                                psswd = 'UAT_PASSWD',
+                                                cltid = 'UAT_CLIENT_ID_FROM_ONBOARDING',
+                                                rsrc  = 'JPMC:URI:RS-103752-21345-GTIDPOServiceMgt-UAT',
+                                                env = 'UAT')
+            self.apigee = 'https://api-s2-uat-mitra.jpmchase.net/gti-it-service-mgt/change/v7/changes/'
+        elif 'DEV' == self.env:
+            self.tokenReader = IdaTokenReceiver(fid = 'DEV_FID',
+                                                psswd = 'DEV_PASSWD',
+                                                cltid = 'DEV_CLIENT_ID_FROM_ONBOARDING',
+                                                rsrc  = 'JPMC:URI:RS-103752-20266-GTIDPOServiceMgt-DEV',
+                                                env   = 'DEV')
+            self.apigee = 'https://developer-s2-dev-nam-mitra.jpmchase.net/gti-it-service-mgt/change/v7/changes/'
+        else:
+            raise Exception('Env [{}] is not supported yet for SnowStatusReader'.format(self.env))
+
+     def getTicketStatus(self, snowTicket, refreshToken=False):
+        if not self.snow_token or refreshToken:
+            self.snow_token = self.tokenReader.getToken()
+        if not self.snow_token:
+            print "No token. Failed"
+            return ""
+        snowurl = self.apigee + snowTicket + '?view=summary'
+        print snowurl
+        request = Request(snowurl)
+        request.add_header("Authorization", "Bearer " + self.snow_token)
+        response_body = urlopen(request).read()
+        return json.loads(response_body)['state']
+

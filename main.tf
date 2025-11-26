@@ -3,11 +3,13 @@
 ###############################
 locals {
   environment = "DEV"
+
   shape_tags = {
     Project     = "Shape"
     Owner       = "ServiceNow"
     Environment = local.environment
   }
+
   roles = {
     lambda = {
       name              = "app-shape-servicenow-lambda-role"
@@ -18,6 +20,7 @@ locals {
       assumable_service = ["events.amazonaws.com"]
     }
   }
+
   endpoints = [
     {
       endpoint              = var.notify_email_id
@@ -28,8 +31,6 @@ locals {
     }
   ]
 }
-
-
 
 ###############################
 # KMS for Secrets & SNS       #
@@ -42,6 +43,7 @@ module "app-shape-snow-lambda_kms" {
   use_random_suffix   = true
   tags                = merge(var.tags, local.shape_tags)
 }
+
 ###############################
 # Secrets Manager Module      #
 ###############################
@@ -52,28 +54,28 @@ module "app-shape-snow-lambda_secrets_manager" {
   secret_kms_key_arn  = module.app-shape-snow-lambda_kms.kms_key_arn
   secret_type         = "keyval"
   secret_content_type = "KEYS"
+
   rotation = {
     rotation_days = 90
     lambda_arn    = module.app-shape-snow-lambda_rotation_lambda.lambda.arn
   }
-  secret_key_list = [
-    "servicenow_username",
-    "servicenow_password",
-    "servicenow_instance_url",
-    "api_token",
-    "token_url",
-    "username",
-    "grant_type",
-    "client_id",
-    "password",
 
+  # Only the API values that belong in the secret JSON
+  # (token_url is now a Lambda env var, NOT in the secret)
+  secret_key_list = [
+    "client_id",
+    "username",
+    "password",
+    "rsrc",
+    "servicenow_instance_url",
   ]
 
-
-
   tags = merge(var.tags, local.shape_tags)
-
 }
+
+###############################
+# Rotation Lambda             #
+###############################
 module "app-shape-snow-lambda_rotation_lambda" {
   source        = "tfe.jpmchase.net/ATLAS-MODULE-REGISTRY/lambda/aws"
   version       = "12.1.0"
@@ -85,9 +87,11 @@ module "app-shape-snow-lambda_rotation_lambda" {
   iam_role_name = module.app-shape-snow-lambda_roles["lambda"].role_name
   iam_role_arn  = module.app-shape-snow-lambda_roles["lambda"].role_arn
   kms_key_arn   = module.app-shape-snow-lambda_kms.kms_key_arn
+
   environment_variables = {
     ENVIRONMENT = local.environment
   }
+
   tags = merge(var.tags, local.shape_tags)
 }
 
@@ -103,6 +107,7 @@ module "app-shape-snow-lambda_sns_email" {
   email_endpoints   = local.endpoints
   tags              = merge(var.tags, local.shape_tags)
 }
+
 ###############################
 # IAM Roles (for_each)        #
 ###############################
@@ -114,6 +119,7 @@ module "app-shape-snow-lambda_roles" {
   assumable_service = each.value.assumable_service
   tags              = merge(var.tags, local.shape_tags)
 }
+
 ###############################
 # Lambda Function             #
 ###############################
@@ -130,15 +136,24 @@ module "app-shape-servicenow-lambda_lambda" {
   iam_role_arn  = module.app-shape-snow-lambda_roles["lambda"].role_arn
   architectures = ["x86_64"]
   kms_key_arn   = module.app-shape-snow-lambda_kms.kms_key_arn
+
   environment_variables = {
-    SERVICENOW_SECRET_ARN = module.app-shape-snow-lambda_secrets_manager.secret_arn
-    SNS_TOPIC_ARN         = module.app-shape-snow-lambda_sns_email.topic_arn
+    # Used by the Python code to load the secret
+    SNOW_SECRET_NAME      = "/application/app-shape-servicenow-lambda"
     INCIDENT_ASSIGN_GROUP = "CCB_DGT_SENG_PSE: Technician"
     ENVIRONMENT           = local.environment
-    SNOW_SECRET_NAME      = "/application/app-shape-servicenow-lambda"
+
+    # Token URL comes from env var (not secret JSON)
+    TOKEN_URL             = var.servicenow_token_url
+
+    # Kept available as you requested
+    SERVICENOW_SECRET_ARN = module.app-shape-snow-lambda_secrets_manager.secret_arn
+    SNS_TOPIC_ARN         = module.app-shape-snow-lambda_sns_email.topic_arn
   }
+
   tags = merge(var.tags, local.shape_tags)
 }
+
 ###############################
 # IAM Role Policy Updates     #
 ###############################
@@ -147,6 +162,7 @@ module "app-shape-snow-lambda_rpu" {
   version               = "60.2.4"
   role_name             = module.app-shape-snow-lambda_roles["lambda"].role_name
   create_managed_policy = true
+
   secretsmanager_access = {
     read_access   = true
     write_access  = false
@@ -155,6 +171,7 @@ module "app-shape-snow-lambda_rpu" {
       module.app-shape-snow-lambda_secrets_manager.secret_arn
     ]
   }
+
   sns_access = {
     sns_list_topics_access = true
     sns_publish_access     = true
@@ -169,7 +186,7 @@ module "app-shape-snow-lambda_rpu" {
     }
     writer_access = {
       scopeOfKMSAccessList = [
-        #  module.app-shape-snow-lambda_kms.kms_key_id,
+        # module.app-shape-snow-lambda_kms.kms_key_id,
       ]
     }
     encryption_access = {
@@ -228,5 +245,4 @@ module "app-shape-snow-lambda_rpu" {
       kmsTargetAccount = var.aws_account_id
     }
   }
-
 }
